@@ -102,7 +102,8 @@ def create_map(world):
             'fillOpacity': 0.7,
         },
         tooltip=tooltip,
-        popup=popup
+        popup=popup,
+        highlight_function=lambda x: {'weight': 3, 'color': 'yellow'},
     ).add_to(m)
 
     add_html_elements(m)
