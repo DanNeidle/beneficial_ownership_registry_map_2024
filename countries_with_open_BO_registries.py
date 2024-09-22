@@ -5,11 +5,16 @@ import pandas as pd
 import pycountry
 import numpy as np
 
-# download the world administrative boundaries shapefile from https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/
 
-# Constants
+# this data comes from https://www.openownership.org/en/map/
 DATA_PATH = 'countries_with_open_registries_data.xlsx'
-SHAPEFILE = 'world-administrative-boundaries'
+
+# download the map unit shapefile from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-details/
+SHAPEFILE = 'ne_10m_admin_0_map_units'
+SHAPEFILE_ISO_KEY = "ADM0_A3"
+SHAPEFILE_NAME_KEY = "NAME"
+SHAPEFILE_SOVEREIGN_KEY = "SOVEREIGNT"  # set as None if there isn't one
+
 OUTPUT_HTML = 'interactive_beneficial_ownership_map_2024.html'
 DEFAULT_COLOR = '#dc3545'  # Red for missing countries
 COLOR_MAP = {
@@ -38,14 +43,15 @@ def load_data(data_path, shapefile_path):
     df['ISO3'] = df['ISO2'].apply(convert_iso2_to_iso3)
    
     world = gpd.read_file(shapefile_path)
-    world['iso3'] = world['iso3'].str.strip()
+    world[SHAPEFILE_ISO_KEY] = world[SHAPEFILE_ISO_KEY].str.strip()
+    
     return df, world
 
 def preprocess_data(df, world):
     df['color'] = df['Who can access'].apply(get_color)
-    world = world.merge(df, left_on='iso3', right_on='ISO3', how='left')
-    world['color'].fillna(DEFAULT_COLOR, inplace=True)
-    world['Country'] = world.get('Country', world['name']).fillna(world['name'])
+    world = world.merge(df, left_on=SHAPEFILE_ISO_KEY, right_on='ISO3', how='left')
+    world['color'] = world['color'].fillna(DEFAULT_COLOR)
+    world['Country'] = world.get('Country', world[SHAPEFILE_NAME_KEY]).fillna(world[SHAPEFILE_NAME_KEY])
     world['Register launched'] = world['Register launched'].fillna('No register').apply(
         lambda x: str(int(x)) if isinstance(x, (float, int)) and not pd.isna(x) else x
     )
@@ -53,14 +59,21 @@ def preprocess_data(df, world):
     world['Link'] = world['Link'].apply(
         lambda x: f'<a href="{x}" target="_blank">Open Register</a>' if pd.notna(x) else 'No link'
     )
+    
+    # Handle Sovereign State and include in popup if key exists
+    if SHAPEFILE_SOVEREIGN_KEY:
+        world['Sovereign state'] = world[SHAPEFILE_SOVEREIGN_KEY]
+    else:
+        world['Sovereign state'] = None
+        
     return world
 
 def create_map(world):
     m = folium.Map(location=MAP_CENTER, zoom_start=ZOOM_START, tiles=TILES)
 
     tooltip = GeoJsonTooltip(
-        fields=['Country', 'Register launched', 'Who can access'],
-        aliases=['Country:', 'Register launched:', 'Access:'],
+        fields=['Country', 'Register launched', 'Who can access', 'Sovereign state'] if SHAPEFILE_SOVEREIGN_KEY else ['Country:', 'Register launched:', 'Access:'],
+        aliases=['Country:', 'Register launched:', 'Access:', 'Sovereign state:'] if SHAPEFILE_SOVEREIGN_KEY else ['Country:', 'Register launched:', 'Access:'],
         localize=True,
         sticky=True,
         labels=True,
@@ -126,9 +139,9 @@ def add_html_elements(m):
          bottom: 50px; left: 50px; width: 200px; height: 120px; 
          background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
          ">&nbsp; <b>Legend</b> <br><br>
-         &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open registry (public) <br>
-         &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed registry <br>
-         &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No registry <br>
+         &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open BO registry (public) <br>
+         &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed BO registry <br>
+         &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No BO registry <br>
          </div>
     '''
     for element in [responsive_html, additional_css, title_html, legend_html]:
