@@ -51,7 +51,7 @@ def fetch_country_data(url):
 def create_dataframe(country_data):
     """Convert country data into a pandas DataFrame and display it."""
     df = pd.DataFrame(country_data)
-    print(df.to_string(index=False, justify='left', col_space=15))
+    # print(df.to_string(index=False, justify='left', col_space=15))
     return df
 
 
@@ -73,8 +73,8 @@ def prepare_geodataframe(df, shapefile_path):
     df['ISO Code'] = df['ISO Code'].str.strip().str.upper()
     
     # Debugging prints
-    print("Unique ISO Codes in Shapefile:", world['ISO_A2'].unique())
-    print("Unique ISO Codes in DataFrame:", df['ISO Code'].unique())
+    # print("Unique ISO Codes in Shapefile:", world['ISO_A2'].unique())
+    # print("Unique ISO Codes in DataFrame:", df['ISO Code'].unique())
     
     world = world.merge(df, left_on='ISO_A2', right_on='ISO Code', how='left')
    
@@ -139,7 +139,7 @@ def create_map(world_gdf):
         #map { position: absolute; top: 0; bottom: 0; right: 0; left: 0; }
         .folium-tooltip { font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
     </style>
-    <h3 align="center" style="font-size:30px"><b>Opennes of company registries, by country</b></h3>
+    <h3 align="center" style="font-size:30px"><b>Openness of company registries, by country</b></h3>
     <div style="position: fixed; bottom: 50px; left: 50px; width: 200px; height: 175px; 
                 background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
                 padding: 10px;">
