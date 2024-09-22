@@ -1,143 +1,128 @@
 import geopandas as gpd
 import folium
-from folium.features import GeoJsonTooltip
+from folium.features import GeoJsonTooltip, GeoJsonPopup
 import pandas as pd
 
-# Load the data from the spreadsheet
-# data is from https://www.openownership.org/en/map/
-data_path = 'countries_with_open_registries_data.xlsx'
-df = pd.read_excel(data_path)
+# Constants
+DATA_PATH = 'countries_with_open_registries_data.xlsx'
+SHAPEFILE_PATH = 'ne_10m_admin_0_map_units/ne_10m_admin_0_map_units.shp'
+OUTPUT_HTML = 'interactive_beneficial_ownership_map_2024.html'
+DEFAULT_COLOR = '#dc3545'  # Red for missing countries
+COLOR_MAP = {
+    'public': '#28a745',    # Green
+    'closed': '#ff7f0e'     # Bluegreen
+}
+MAP_CENTER = [20, 0]
+ZOOM_START = 3
+TILES = 'CartoDB positron'
 
-# Define a function to check access and set color
 def get_color(access):
-    if 'public' in str(access).lower():
-        return '#28a745'  # Green
-    return '#ff7f0e'  # bluegreen
+    return COLOR_MAP.get('public' if 'public' in str(access).lower() else 'closed', DEFAULT_COLOR)
 
-# Load the shapefile for world countries
-local_shapefile_path = 'ne_110m_admin_0_countries/ne_110m_admin_0_countries.shp'
-world = gpd.read_file(local_shapefile_path)
+def load_data(data_path, shapefile_path):
+    df = pd.read_excel(data_path)
+    world = gpd.read_file(shapefile_path)
+    world['ISO_A2'] = world['ISO_A2'].str.strip()
+    return df, world
 
-# Ensure consistent naming
-world['ISO_A2'] = world['ISO_A2'].str.strip()
+def preprocess_data(df, world):
+    df['color'] = df['Who can access'].apply(get_color)
+    world = world.merge(df, left_on='ISO_A2', right_on='ISO2', how='left')
+    world['color'].fillna(DEFAULT_COLOR, inplace=True)
+    world['Country'] = world.get('Country', world['NAME']).fillna(world['NAME'])
+    world['Register launched'] = world['Register launched'].fillna('No register').apply(
+        lambda x: str(int(x)) if isinstance(x, (float, int)) and not pd.isna(x) else x
+    )
+    world['Who can access'] = world['Who can access'].fillna('No register')
+    world['Link'] = world['Link'].apply(
+        lambda x: f'<a href="{x}" target="_blank">Open Register</a>' if pd.notna(x) else 'No link'
+    )
+    return world
 
-# Create a color column based on access conditions in the spreadsheet
-df['color'] = df['Who can access'].apply(get_color)
+def create_map(world):
+    m = folium.Map(location=MAP_CENTER, zoom_start=ZOOM_START, tiles=TILES)
 
-# Merge the data based on the ISO country codes
-world = world.merge(df, left_on='ISO_A2', right_on='ISO2', how='left')
+    tooltip = GeoJsonTooltip(
+        fields=['Country', 'Register launched', 'Who can access'],
+        aliases=['Country:', 'Register launched:', 'Access:'],
+        localize=True,
+        sticky=True,
+        labels=True,
+        style="""
+            background-color: #F0EFEF;
+            border: 1px solid black;
+            border-radius: 3px;
+            box-shadow: 3px;
+        """,
+        max_width=800,
+    )
 
-# Change the default color for countries not in the spreadsheet to black
-world['color'] = world['color'].fillna('#dc3545')  # red for missing countries
-
-
-# Fill missing fields with the text 'No register' for the tooltip
-world['Country'] = world['Country'].fillna(world['NAME'])  # Use 'NAME' from shapefile if 'Country' is missing
-world['Register launched'] = world['Register launched'].fillna('No register').apply(lambda x: str(int(x)) if isinstance(x, (float, int)) and not pd.isna(x) else x)
-
-world['Who can access'] = world['Who can access'].fillna('No register')
-
-# Modify the 'Link' field to contain the actual HTML link
-world['Link'] = world['Link'].apply(lambda x: f'<a href="{x}" target="_blank">Open Register</a>' if pd.notna(x) else 'No link')
-
-
-
-# Initialize Folium map centered around the equator and prime meridian
-m = folium.Map(location=[20, 0], zoom_start=3, tiles='CartoDB positron')
-
-# Function to style each country
-def style_function(feature):
-    return {
-        'fillColor': feature['properties']['color'],
-        'color': 'black',
-        'weight': 0.5,
-        'fillOpacity': 0.7,
-    }
-
-# Create tooltips with country name, register, and access info
-tooltip = GeoJsonTooltip(
-    fields=['Country', 'Register launched', 'Who can access'],
-    aliases=['Country:', 'Register launched:', 'Access:'],
-    localize=True,
-    sticky=True,
-    labels=True,
-    style="""
-        background-color: #F0EFEF;
-        border: 1px solid black;
-        border-radius: 3px;
-        box-shadow: 3px;
-    """,
-    max_width=800,
-)
-
-# Add GeoJson to the map with hover text
-geojson = folium.GeoJson(
-    world,
-    style_function=style_function,
-    tooltip=tooltip,
-    popup=folium.GeoJsonPopup(
+    popup = GeoJsonPopup(
         fields=['Link'],
         labels=False,
         localize=True,
         parse_html=True
     )
-)
 
+    folium.GeoJson(
+        world,
+        style_function=lambda feature: {
+            'fillColor': feature['properties']['color'],
+            'color': 'black',
+            'weight': 0.5,
+            'fillOpacity': 0.7,
+        },
+        tooltip=tooltip,
+        popup=popup
+    ).add_to(m)
 
-geojson.add_to(m)
+    add_html_elements(m)
+    return m
 
-# Add responsive meta tag
-responsive_html = """
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-"""
-
-m.get_root().html.add_child(folium.Element(responsive_html))
-
-# Additional CSS to make the map responsive and pretty
-additional_css = """
-<style>
-    /* Ensure the map fills the viewport */
-    html, body {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-    }
-    #map {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        right: 0;
-        left: 0;
-    }
-    .folium-tooltip {
-        font-family: Arial, Helvetica, sans-serif;
-        font-size: 14px;
-    }
-</style>
-"""
-
-m.get_root().html.add_child(folium.Element(additional_css))
-
-# Add a title to the map
-title_html = '''
-    <h3 align="center" style="font-size:30px"><b>Beneficial ownership registers worldwide</b></h3>
+def add_html_elements(m):
+    responsive_html = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+    additional_css = """
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            left: 0;
+        }
+        .folium-tooltip {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+        }
+    </style>
+    """
+    title_html = '''
+        <h3 align="center" style="font-size:30px"><b>Beneficial ownership registers worldwide</b></h3>
     '''
-m.get_root().html.add_child(folium.Element(title_html))
+    legend_html = '''
+         <div style="position: fixed; 
+         bottom: 50px; left: 50px; width: 200px; height: 120px; 
+         background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
+         ">&nbsp; <b>Legend</b> <br><br>
+         &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open registry (public) <br>
+         &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed registry <br>
+         &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No registry <br>
+         </div>
+    '''
+    for element in [responsive_html, additional_css, title_html, legend_html]:
+        m.get_root().html.add_child(folium.Element(element))
 
+def main():
+    df, world = load_data(DATA_PATH, SHAPEFILE_PATH)
+    world = preprocess_data(df, world)
+    m = create_map(world)
+    m.save(OUTPUT_HTML)
 
-# Add a custom legend
-legend_html = '''
-     <div style="position: fixed; 
-     bottom: 50px; left: 50px; width: 200px; height: 120px; 
-     background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
-     ">&nbsp; <b>Legend</b> <br>
-     &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open registry (public) <br>
-     &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed registry <br>
-     &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No registry <br>
-     </div>
-     '''
-m.get_root().html.add_child(folium.Element(legend_html))
-
-# Save the map to an HTML file
-m.save('interactive_beneficial_ownership_map_2024.html')
+if __name__ == "__main__":
+    main()
