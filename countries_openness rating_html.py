@@ -10,13 +10,15 @@ import matplotlib
 # Constants
 URL = 'http://registries.opencorporates.com/'
 OUTPUT_MAP = 'interactive_corporate_openness_map_scraped_2024.html'
+SHAPEFILE = 'world-administrative-boundaries'
 
-SHAPEFILE_PATH = 'ne_10m_admin_0_map_units/ne_10m_admin_0_map_units.shp'
+# download the world administrative boundaries shapefile from https://public.opendatasoft.com/explore/dataset/world-administrative-boundaries/export/
+
 
 def get_iso_code(country_name):
-    """Retrieve the 2-letter ISO code for a given country name."""
+    """Retrieve the 3-letter ISO code for a given country name."""
     try:
-        return pycountry.countries.lookup(country_name).alpha_2
+        return pycountry.countries.lookup(country_name).alpha_3
     except LookupError:
         return None
 
@@ -68,18 +70,23 @@ def prepare_geodataframe(df, shapefile_path):
     """Merge the country data with the world shapefile GeoDataFrame."""
     world = gpd.read_file(shapefile_path)
     
+    # debug check keys
+    # print(world.keys())
+    # exit()
+    
+    
     # Ensure ISO codes are uppercase and stripped of whitespace
-    world['ISO_A2'] = world['ISO_A2'].str.strip().str.upper()
+    world['iso3'] = world['iso3'].str.strip().str.upper()
     df['ISO Code'] = df['ISO Code'].str.strip().str.upper()
     
     # Debugging prints
-    # print("Unique ISO Codes in Shapefile:", world['ISO_A2'].unique())
+    # print("Unique ISO Codes in Shapefile:", world['iso3'].unique())
     # print("Unique ISO Codes in DataFrame:", df['ISO Code'].unique())
     
-    world = world.merge(df, left_on='ISO_A2', right_on='ISO Code', how='left')
+    world = world.merge(df, left_on='iso3', right_on='ISO Code', how='left')
    
     world['color'] = world['color'].fillna('#ffffff')
-    world['Country'] = world['Country'].fillna(world['NAME'])
+    world['Country'] = world['Country'].fillna(world['name'])
     world['Openness Score'] = world['Openness Score'].fillna(0).astype(int)
     world['URL'] = world['URL'].apply(
         lambda x: f'<a href="{x}" target="_blank">Click through to details</a>' if pd.notna(x) else 'No link'
@@ -163,7 +170,7 @@ def main():
 
     df = create_dataframe(country_data)
     df = assign_colors(df)
-    world_gdf = prepare_geodataframe(df, SHAPEFILE_PATH)
+    world_gdf = prepare_geodataframe(df, f'{SHAPEFILE}/{SHAPEFILE}.shp')
 
     # Create and save the map
     folium_map = create_map(world_gdf)
