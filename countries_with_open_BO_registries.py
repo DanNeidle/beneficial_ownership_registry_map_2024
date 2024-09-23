@@ -5,15 +5,11 @@ import pandas as pd
 import pycountry
 import numpy as np
 
+from map_plotting_functions import SHAPEFILE_ISO_KEY, SHAPEFILE_NAME_KEY, SHAPEFILE_SOVEREIGN_KEY, create_world, verify_country_merge, add_html_elements
+
 
 # this data comes from https://www.openownership.org/en/map/
 DATA_PATH = 'countries_with_open_registries_data.xlsx'
-
-# download the map unit shapefile from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-details/
-SHAPEFILE = 'ne_10m_admin_0_map_units'
-SHAPEFILE_ISO_KEY = "ADM0_A3"
-SHAPEFILE_NAME_KEY = "NAME"
-SHAPEFILE_SOVEREIGN_KEY = "SOVEREIGNT"  # set as None if there isn't one
 
 OUTPUT_HTML = 'interactive_beneficial_ownership_map_2024.html'
 DEFAULT_COLOR = '#dc3545'  # Red for missing countries
@@ -38,18 +34,26 @@ def convert_iso2_to_iso3(iso2_code):
     except AttributeError:
         raise Exception(f"Country with ISO2 code '{iso2_code}' not found.")
 
-def load_data(data_path, shapefile_path):
+def load_data(data_path):
     df = pd.read_excel(data_path)
     df['ISO3'] = df['ISO2'].apply(convert_iso2_to_iso3)
-   
-    world = gpd.read_file(shapefile_path)
-    world[SHAPEFILE_ISO_KEY] = world[SHAPEFILE_ISO_KEY].str.strip()
-    
-    return df, world
 
-def preprocess_data(df, world):
+    return df
+
+def prepare_geodataframe(df, world):
     df['color'] = df['Who can access'].apply(get_color)
     world = world.merge(df, left_on=SHAPEFILE_ISO_KEY, right_on='ISO3', how='left')
+    
+    # Verify that all countries from the data are present in the shapefile
+    verify_country_merge(
+        data_df=df, 
+        world_gdf=world, 
+        data_iso_column='ISO3', 
+        data_country_column='Country'
+    )
+    
+    
+    
     world['color'] = world['color'].fillna(DEFAULT_COLOR)
     world['Country'] = world.get('Country', world[SHAPEFILE_NAME_KEY]).fillna(world[SHAPEFILE_NAME_KEY])
     world['Register launched'] = world['Register launched'].fillna('No register').apply(
@@ -65,6 +69,10 @@ def preprocess_data(df, world):
         world['Sovereign state'] = world[SHAPEFILE_SOVEREIGN_KEY]
     else:
         world['Sovereign state'] = None
+        
+    # Remove unnecessary columns to reduce size
+    columns_to_keep = ['Country', 'Register launched', 'Link', 'Sovereign state', 'color', 'geometry', 'Who can access', 'tolerance']
+    world = world[columns_to_keep]
         
     return world
 
@@ -106,56 +114,33 @@ def create_map(world):
         highlight_function=lambda x: {'weight': 3, 'color': 'yellow'},
     ).add_to(m)
 
-    add_html_elements(m)
+    title = "Beneficial ownership registers worldwide"
+    legend = '''
+    &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open BO registry (public) <br>
+    &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed BO registry <br>
+    &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No BO registry <br>
+    '''
+
+    add_html_elements(m, title, legend, width=220, height=90)
     return m
 
-def add_html_elements(m):
-    responsive_html = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
-    additional_css = """
-    <style>
-        html, body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            padding: 0;
-        }
-        #map {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            right: 0;
-            left: 0;
-        }
-        .folium-tooltip {
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 14px;
-        }
-    </style>
-    """
-    title_html = '''
-        <h3 align="center" style="font-size:30px"><b>Beneficial ownership registers worldwide</b></h3>
-    '''
-    legend_html = '''
-         <div style="position: fixed; 
-         bottom: 50px; left: 50px; width: 200px; height: 120px; 
-         background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
-         ">&nbsp; <b>Legend</b> <br><br>
-         &nbsp; <i class="fa fa-circle" style="color:#28a745"></i>&nbsp; Open BO registry (public) <br>
-         &nbsp; <i class="fa fa-circle" style="color:#ff7f0e"></i>&nbsp; Closed BO registry <br>
-         &nbsp; <i class="fa fa-circle" style="color:#dc3545"></i>&nbsp; No BO registry <br>
-         </div>
-    '''
-    for element in [responsive_html, additional_css, title_html, legend_html]:
-        m.get_root().html.add_child(folium.Element(element))
+
+
 
 def main():
-    df, world = load_data(DATA_PATH, f'{SHAPEFILE}/{SHAPEFILE}.shp')
+    df = load_data(DATA_PATH)
+    world = create_world() 
     
     # print(df.to_string(index=False, justify='left', col_space=15))
     
-    world = preprocess_data(df, world)
-    m = create_map(world)
-    m.save(OUTPUT_HTML)
+    world_gdf = prepare_geodataframe(df, world)
+    folium_map = create_map(world_gdf)
+    folium_map.save(OUTPUT_HTML)
 
 if __name__ == "__main__":
     main()
+
+
+
+# about to refactor
+

@@ -1,34 +1,19 @@
 import requests
 from bs4 import BeautifulSoup
-import pycountry
-import geopandas as gpd
+
 import folium
 from folium.features import GeoJsonTooltip, GeoJsonPopup
 import pandas as pd
 import matplotlib
-import os
+import matplotlib.colors as colors
+
+from map_plotting_functions import SHAPEFILE_ISO_KEY, SHAPEFILE_NAME_KEY, SHAPEFILE_SOVEREIGN_KEY, create_world, get_iso_code, verify_country_merge, add_html_elements
 
 # We scrape the brilliant opencorporate data - please don't abuse this.
 URL = 'http://registries.opencorporates.com/'
 OUTPUT_MAP = 'interactive_corporate_openness_map_scraped_2024.html'
 
 # download the map unit shapefile from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-details/
-
-SHAPEFILE = 'ne_10m_admin_0_map_units'
-SHAPEFILE_ISO_KEY = "ADM0_A3"
-SHAPEFILE_NAME_KEY = "NAME"
-SHAPEFILE_SOVEREIGN_KEY = "SOVEREIGNT"  # set as None if there isn't one
-
-# Path to the shapefile (ensure all associated files are present)
-SHAPEFILE_PATH = f'{SHAPEFILE}/{SHAPEFILE}.shp'
-
-
-def get_iso_code(country_name):
-    """Retrieve the 3-letter ISO code for a given country name."""
-    try:
-        return pycountry.countries.lookup(country_name).alpha_3
-    except LookupError:
-        return None
 
 
 def fetch_country_data(url):
@@ -58,8 +43,9 @@ def fetch_country_data(url):
             'URL': country_url,
             'ISO Code': iso_code
         })
-
+        
     return country_data
+
 
 
 def create_dataframe(country_data):
@@ -68,46 +54,43 @@ def create_dataframe(country_data):
     return df
 
 
-def assign_colors(df):
-    """Assign colors to countries based on their openness scores."""
-    norm = matplotlib.colors.Normalize(vmin=0, vmax=100)
-    
-    # Updated line to use the recommended colormap access method
-    cmap = matplotlib.colormaps.get_cmap('Blues')  # Option 1
-    # Alternatively, you can use:
-    # cmap = matplotlib.colormaps['Blues']       # Option 2
 
+def assign_colors(df):
+    # Using PowerNorm to adjust color intensity
+    norm = colors.PowerNorm(gamma=0.5, vmin=0, vmax=100)  # Adjust gamma as needed
+    
+    # Retain the 'Blues' colormap
+    cmap = matplotlib.colormaps.get_cmap('Blues')
+    
     df['color'] = df['Openness Score'].apply(
         lambda score: matplotlib.colors.rgb2hex(cmap(norm(score)))
     )
     return df
 
 
-
-def prepare_geodataframe(df, shapefile_path):
-    """Merge the country data with the world shapefile GeoDataFrame."""
-    if not os.path.exists(shapefile_path):
-        print(f"Shapefile not found at {shapefile_path}. Please check the path.")
-        return None
-
-    world = gpd.read_file(shapefile_path)
-
-    # Debugging: Print available columns
-    # print(f"Available shapefile columns: {world.columns.tolist()}")
-
-    # Ensure ISO codes are uppercase and stripped of whitespace
-    world[SHAPEFILE_ISO_KEY] = world[SHAPEFILE_ISO_KEY].str.strip().str.upper()
+def prepare_geodataframe(world, df):
+    
     df['ISO Code'] = df['ISO Code'].str.strip().str.upper()
 
     # Merge dataframes on ISO code
     world = world.merge(df, left_on=SHAPEFILE_ISO_KEY, right_on='ISO Code', how='left')
+    
+    verify_country_merge(
+        data_df=df, 
+        world_gdf=world, 
+        data_iso_column='ISO Code', 
+        data_country_column='Country'
+    )
 
     # Fill missing values
     world['color'] = world['color'].fillna('#ffffff')
     world['Country'] = world['Country'].fillna(world[SHAPEFILE_NAME_KEY])
     world['Openness Score'] = world['Openness Score'].fillna(0).astype(int)
-    world['URL'] = world['URL'].apply(
-        lambda x: f'<a href="{x}" target="_blank">Click through to details</a>' if pd.notna(x) else 'No link'
+    
+    world['URL'] = world.apply(
+        lambda row: f'<a href="{row["URL"]}" target="_blank">Click through to {row["Country"]} register</a>' 
+        if pd.notna(row["URL"]) else 'No link',
+        axis=1
     )
 
     # Handle Sovereign State and include in popup if key exists
@@ -118,9 +101,12 @@ def prepare_geodataframe(df, shapefile_path):
 
     # Create popup_html field
     world['popup_html'] = world['URL']
+    
+    # Remove unnecessary columns to reduce size
+    columns_to_keep = ['Country', 'Openness Score', 'popup_html', 'Sovereign state', 'color', 'geometry', 'tolerance']
+    world = world[columns_to_keep]
 
     return world
-
 
 def create_map(world_gdf):
     """Create and customize the interactive Folium map."""
@@ -166,27 +152,20 @@ def create_map(world_gdf):
         highlight_function=lambda x: {'weight': 3, 'color': 'yellow'},
         name="Corporate Openness"
     ).add_to(m)
+    
+    title = "Openness of Company Registries, by Country"
+    legend = '''
+    &nbsp; <b>Openness of register</b> <br><br>
+    &nbsp; <i style="background-color:#08306B;width:20px;height:20px;display:inline-block;vertical-align:middle"></i>&nbsp; 100 <br>
+    &nbsp; <i style="background-color:#2171B5;width:20px;height:20px;display:inline-block;vertical-align:middle"></i>&nbsp; 75 <br>
+    &nbsp; <i style="background-color:#6BAED6;width:20px;height:20px;display:inline-block;vertical-align:middle"></i>&nbsp; 50 <br>
+    &nbsp; <i style="background-color:#BDD7E7;width:20px;height:20px;display:inline-block;vertical-align:middle"></i>&nbsp; 25 <br>
+    &nbsp; <i style="background-color:#FFFFFF;width:20px;height:20px;display:inline-block;border:1px solid grey;vertical-align:middle"></i>&nbsp; 0 <br>
+    '''
 
-    # Add HTML elements (e.g., title and legend)
-    m.get_root().html.add_child(folium.Element("""
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        html, body { width: 100%; height: 100%; margin: 0; padding: 0; }
-        #map { position: absolute; top: 0; bottom: 0; right: 0; left: 0; }
-        .folium-tooltip { font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
-    </style>
-    <h3 align="center" style="font-size:30px"><b>Openness of Company Registries, by Country</b></h3>
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px; height: 200px; 
-                background-color: white; border:2px solid grey; z-index:9999; font-size:14px;
-                padding: 10px;">
-        &nbsp; <b style="margin-bottom: 10px; display: inline-block;">Openness scores:</b> <br>
-        &nbsp; <i style="background-color:#08306B;width:20px;height:20px;display:inline-block"></i>&nbsp; 100 <br>
-        &nbsp; <i style="background-color:#2171B5;width:20px;height:20px;display:inline-block"></i>&nbsp; 75 <br>
-        &nbsp; <i style="background-color:#6BAED6;width:20px;height:20px;display:inline-block"></i>&nbsp; 50 <br>
-        &nbsp; <i style="background-color:#BDD7E7;width:20px;height:20px;display:inline-block"></i>&nbsp; 25 <br>
-        &nbsp; <i style="background-color:#FFFFFF;width:20px;height:20px;display:inline-block;border:1px solid grey"></i>&nbsp; 0 <br>
-    </div>
-    """))
+
+    add_html_elements(m, title, legend, width=200, height=180)
+
 
     return m
 
@@ -200,7 +179,9 @@ def main():
 
     df = create_dataframe(country_data)
     df = assign_colors(df)
-    world_gdf = prepare_geodataframe(df, SHAPEFILE_PATH)
+    
+    world = create_world() 
+    world_gdf = prepare_geodataframe(world, df)
 
     if world_gdf is None:
         print("GeoDataFrame preparation failed. Exiting.")
@@ -214,3 +195,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# now
