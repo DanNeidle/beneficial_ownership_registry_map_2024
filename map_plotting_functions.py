@@ -195,9 +195,11 @@ def add_html_elements(m, title, legend, width=200, height=120):
         }
     </style>
     """
+    
     title_html = f'''
         <h3 align="center" style="font-size:30px"><b>{title}</b></h3>
     '''
+    
     legend_html = f'''
          <div style="position: fixed; 
          bottom: 50px; left: 50px; width: {width}px; height: {height}px; 
@@ -243,11 +245,29 @@ def add_html_elements(m, title, legend, width=200, height=120):
     if (!isInIframe()) {
         document.getElementById('custom-logo').style.display = 'block';
     }
+    
 </script>
 
 
 """
+
+    # Favicon HTML to set the logo in the browser tab
+    favicon_html = f'''
+    <script>
+        // Update the browser tab title to match the provided title
+        document.title = "{title}";
+
+        // Create a link element for the favicon
+        var link = document.createElement('link');
+        link.rel = 'icon';
+        link.type = 'image/png';
+        link.href = 'https://taxpolicy.org.uk/wp-content/assets/logo_emblem_on_blue.jpg';
+        
+        // Append the favicon link to the document head
+        document.getElementsByTagName('head')[0].appendChild(link);
+    </script>
+    '''
     
-    for element in [responsive_html, additional_css, title_html, legend_html, logo_html]:
+    for element in [responsive_html, additional_css, title_html, legend_html, logo_html, favicon_html]:
         m.get_root().html.add_child(folium.Element(element))
     return m
